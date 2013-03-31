@@ -37,6 +37,8 @@ int main(int argc, char *argv[]){
     workzyx = fftw_alloc_complex(aliased.nz * aliased.ny * aliased.nx);
     workxyz = fftw_alloc_complex(aliased.nz * fou.nx * fou.ny);
 
+    grid_t workxyz_grid = {fou.nx, fou.ny, aliased.nz};
+
     /* Start the program */
     h5err = H5open();
 
@@ -58,39 +60,89 @@ int main(int argc, char *argv[]){
 
     /* Plan the 2d fft */
     fftw_plan fft_2d_forward_plan, fft_2d_backward_plan;
+    fftw_plan fft_z_forward_plan, fft_z_backward_plan;
 
     fft_2d_forward_plan = fftw_plan_dft_r2c_2d(phys.ny,phys.nx,vort,workzyx,FFTW_ESTIMATE | FFTW_DESTROY_INPUT);
+    fft_z_forward_plan = fftw_plan_dft_1d(aliased.nz,workzyx,vort_hat,FFTW_FORWARD,FFTW_ESTIMATE | FFTW_DESTROY_INPUT);
+    fft_z_backward_plan = fftw_plan_dft_1d(aliased.nz,vort_hat,workzyx,FFTW_BACKWARD, FFTW_ESTIMATE | FFTW_DESTROY_INPUT);
     fft_2d_backward_plan = fftw_plan_dft_c2r_2d(phys.ny,phys.nx,workzyx,vort,FFTW_ESTIMATE | FFTW_DESTROY_INPUT);
 
     for(k=0; k<phys.nz;k++){
         fftw_execute_dft_r2c(fft_2d_forward_plan,vort+(k*phys.ny*phys.nx),workzyx+(k*aliased.ny*aliased.nx));
     }
-//    fftw_execute_dft_r2c(fft_2d_forward_plan,vort,workzyx);
 
-    /* Filter in fourier to see if everything is aligned as expected */
-
+    /* Transpose and dealias */
+    int countj = 0;
     for(k=0; k<aliased.nz; k++){
         for(j=0; j<aliased.ny; j++){
-            for(i=0; i<aliased.nx; i++){
-                if (j > 4 && j < aliased.ny-4){
-                    workzyx[idx(k,j,i,aliased)] = 0.0 + 0.0*I;
+            if (j < aliased.ny/2){
+                for(i=0; i<fou.nx; j++){
+                    workxyz[idx(i,j,k,workxyz_grid)] = workzyx[idx(k,j,i,aliased)];
                 }
-                if (i > 4){
-                    workzyx[idx(k,j,i,aliased)] = 0.0 + 0.0*I;
+                countj++;
+            }
+            if (j > 3*aliased.ny/2){
+                for(i=0; i<fou.nx; j++){
+                    workxyz[idx(i,j,k,workxyz_grid)] = workzyx[idx(k,j,i,aliased)];
                 }
+                countj++;
             }
         }
     }
+    printf("check, %f == %f\n",countj,fou.ny);
 
-    for(i=0; i<2*aliased.nx; i++){
-        printf("%f, %f\n",creal(workzyx[idx(0,5,i,aliased)]),cimag(workzyx[idx(0,5,i,aliased)]));
+    /* Make the z-aligned fft after the transpose. Now the z direction is
+     * the least significant. I am using pointer arithmetic here. */
+    for(i=0; i<fou.nx*fou.nz; i++){
+        fftw_execute_dft(fft_z_forward_plan,workxyz+(i*aliased.nz),workzyx+(i*aliased.nz));
+        for(k=0; k<fou.nz; k++){
+            vort_hat[k+fou.nz*i] = workxyz[k+aliased.nz*i];
+        }
     }
+
+    /* Do something here */
+
+    for(i=0; i<fou.nx*fou.nz; i++){
+        /* Zero-padding. */
+        for(k=0; k<aliased.nz; k++){
+            workzyx[k+aliased.nz*i] = 0.0 + 0.0*I;
+        }
+        for(k=0; k<fou.nz; k++){
+            workzyx[k+aliased.nz*i] = vort_hat[k*fou.nz*i];
+        }
+        fftw_execute_dft(fft_z_backward_plan,workzyx+(i*aliased.nz),workxyz+(i*aliased.nz));
+    }
+
+    /* Zero padding previous to the transpose*/
+    for(k=0; k<aliased.nz*aliased.ny*aliased.nx; k++){
+        workzyx[k] = 0.0 + 0.0*I;
+    }
+
+    /* Transpose */
+    countj = 0;
+    for(k=0; k<aliased.nz; k++){
+        for(j=0; j<aliased.ny; j++){
+            if (j < aliased.ny/2){
+                for(i=0; i<fou.nx; j++){
+                    workzyx[idx(k,j,i,aliased)] = workxyz[idx(i,j,k,workxyz_grid)];
+                }
+                countj++;
+            }
+            if (j > 3*aliased.ny/2){
+                for(i=0; i<fou.nx; j++){
+                    workzyx[idx(k,j,i,aliased)] = workxyz[idx(i,j,k,workxyz_grid)];
+                }
+                countj++;
+            }
+        }
+    }
+    printf("check, %f == %f\n",countj,fou.ny);
+
 
     /* Transform back to physical space */
     for(k=0; k<phys.nz;k++){
         fftw_execute_dft_c2r(fft_2d_backward_plan,workzyx+(k*aliased.ny*aliased.nx),vort+(k*phys.ny*phys.nx));
     }
-//    fftw_execute_dft_c2r(fft_2d_backward_plan,workzyx,vort);
 
     h5err = dump_file("result.h5", vort, phys);
 
