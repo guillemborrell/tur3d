@@ -3,6 +3,7 @@
 #define NZ 32
 
 #include <gsl/gsl_rng.h>
+#include <assert.h>
 #include "types.h"
 #include "io.h"
 
@@ -35,7 +36,7 @@ int main(int argc, char *argv[]){
     vort = fftw_alloc_real(phys.nz * phys.ny * phys.nx);
     vort_hat = fftw_alloc_complex(fou.nz * fou.ny * fou.nx);
     workzyx = fftw_alloc_complex(aliased.nz * aliased.ny * aliased.nx);
-    workxyz = fftw_alloc_complex(aliased.nz * fou.nx * fou.ny);
+    workxyz = fftw_alloc_complex(aliased.nz * aliased.nx * aliased.ny);
 
     grid_t workxyz_grid = {fou.nx, fou.ny, aliased.nz};
 
@@ -74,22 +75,23 @@ int main(int argc, char *argv[]){
     /* Transpose and dealias */
     int countj = 0;
     for(k=0; k<aliased.nz; k++){
+        countj = 0;
         for(j=0; j<aliased.ny; j++){
-            if (j < aliased.ny/2){
-                for(i=0; i<fou.nx; j++){
+            if (j < aliased.ny/3){
+                for(i=0; i<fou.nx; i++){
                     workxyz[idx(i,j,k,workxyz_grid)] = workzyx[idx(k,j,i,aliased)];
                 }
                 countj++;
             }
-            if (j > 3*aliased.ny/2){
-                for(i=0; i<fou.nx; j++){
+            if (j >= 2*aliased.ny/3){
+                for(i=0; i<fou.nx; i++){
                     workxyz[idx(i,j,k,workxyz_grid)] = workzyx[idx(k,j,i,aliased)];
                 }
                 countj++;
             }
         }
     }
-    printf("check, %f == %f\n",countj,fou.ny);
+    assert(countj == fou.ny);
 
     /* Make the z-aligned fft after the transpose. Now the z direction is
      * the least significant. I am using pointer arithmetic here. */
@@ -108,7 +110,7 @@ int main(int argc, char *argv[]){
             workzyx[k+aliased.nz*i] = 0.0 + 0.0*I;
         }
         for(k=0; k<fou.nz; k++){
-            workzyx[k+aliased.nz*i] = vort_hat[k*fou.nz*i];
+            workzyx[k+aliased.nz*i] = vort_hat[k+fou.nz*i];
         }
         fftw_execute_dft(fft_z_backward_plan,workzyx+(i*aliased.nz),workxyz+(i*aliased.nz));
     }
@@ -119,29 +121,34 @@ int main(int argc, char *argv[]){
     }
 
     /* Transpose */
-    countj = 0;
     for(k=0; k<aliased.nz; k++){
+        countj = 0;
         for(j=0; j<aliased.ny; j++){
-            if (j < aliased.ny/2){
-                for(i=0; i<fou.nx; j++){
+            if (j < aliased.ny/3){
+                for(i=0; i<fou.nx; i++){
                     workzyx[idx(k,j,i,aliased)] = workxyz[idx(i,j,k,workxyz_grid)];
                 }
                 countj++;
             }
-            if (j > 3*aliased.ny/2){
-                for(i=0; i<fou.nx; j++){
+            if (j >= 2*aliased.ny/3){
+                for(i=0; i<fou.nx; i++){
                     workzyx[idx(k,j,i,aliased)] = workxyz[idx(i,j,k,workxyz_grid)];
                 }
                 countj++;
             }
         }
     }
-    printf("check, %f == %f\n",countj,fou.ny);
+    assert(countj == fou.ny);
 
 
     /* Transform back to physical space */
     for(k=0; k<phys.nz;k++){
         fftw_execute_dft_c2r(fft_2d_backward_plan,workzyx+(k*aliased.ny*aliased.nx),vort+(k*phys.ny*phys.nx));
+    }
+
+    /* Finally, renormalize the reverse transform */
+    for(k=0; k<phys.nz*phys.ny*phys.nx; k++){
+        vort[k] = vort[k]/(phys.nz*phys.ny*phys.nx);
     }
 
     h5err = dump_file("result.h5", vort, phys);
@@ -151,6 +158,10 @@ int main(int argc, char *argv[]){
     fftw_free(vort_hat);
     fftw_free(workxyz);
     fftw_free(workzyx);
+    fftw_destroy_plan(fft_2d_forward_plan);
+    fftw_destroy_plan(fft_2d_backward_plan);
+    fftw_destroy_plan(fft_z_forward_plan);
+    fftw_destroy_plan(fft_z_backward_plan);
 
     h5err = H5close();
     return 0;
