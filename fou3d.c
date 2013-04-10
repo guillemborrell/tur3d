@@ -6,6 +6,7 @@
 #include <assert.h>
 #include "types.h"
 #include "io.h"
+#include "fou3d.h"
 
 
 int main(int argc, char *argv[]){
@@ -63,6 +64,17 @@ int main(int argc, char *argv[]){
     /* Plan the 2d fft */
     fftw_plan fft_2d_forward_plan, fft_2d_backward_plan;
     fftw_plan fft_z_forward_plan, fft_z_backward_plan;
+
+    fft_2d_forward_plan = fftw_plan_dft_r2c_2d(phys.ny,phys.nx,
+                                               vort,workzyx,
+                                               FFTW_ESTIMATE | FFTW_DESTROY_INPUT);
+    fft_z_forward_plan = fftw_plan_dft_1d(aliased.nz,workzyx,vort_hat,
+                                          FFTW_FORWARD,FFTW_ESTIMATE | FFTW_DESTROY_INPUT);
+    fft_z_backward_plan = fftw_plan_dft_1d(aliased.nz,vort_hat,workzyx,
+                                           FFTW_BACKWARD, FFTW_ESTIMATE | FFTW_DESTROY_INPUT);
+    fft_2d_backward_plan = fftw_plan_dft_c2r_2d(phys.ny,phys.nx,
+                                                workzyx,vort,
+                                                FFTW_ESTIMATE | FFTW_DESTROY_INPUT);
 
     for(k=0; k<phys.nz;k++){
         fftw_execute_dft_r2c(fft_2d_forward_plan,vort+(k*phys.ny*phys.nx),workzyx+(k*aliased.ny*aliased.nx));
@@ -163,18 +175,3 @@ int main(int argc, char *argv[]){
     return 0;
 }
 
-void fft_plan(fftw_plan *fft_2d_forward_plan, fftw_plan *fft_2d_backward_plan,
-              fftw_plan *fft_z_forward_plan, fftw_plan *fft_z_backward_plan){
-
-    fft_2d_forward_plan = fftw_plan_dft_r2c_2d(phys.ny,phys.nx,
-                                               vort,workzyx,
-                                               FFTW_ESTIMATE | FFTW_DESTROY_INPUT);
-    fft_z_forward_plan = fftw_plan_dft_1d(aliased.nz,workzyx,vort_hat,
-                                          FFTW_FORWARD,FFTW_ESTIMATE | FFTW_DESTROY_INPUT);
-    fft_z_backward_plan = fftw_plan_dft_1d(aliased.nz,vort_hat,workzyx,
-                                           FFTW_BACKWARD, FFTW_ESTIMATE | FFTW_DESTROY_INPUT);
-    fft_2d_backward_plan = fftw_plan_dft_c2r_2d(phys.ny,phys.nx,
-                                                workzyx,vort,
-                                                FFTW_ESTIMATE | FFTW_DESTROY_INPUT);
-
-}
